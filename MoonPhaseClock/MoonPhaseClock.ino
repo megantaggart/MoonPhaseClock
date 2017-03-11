@@ -14,11 +14,18 @@ RtcDS3231<TwoWire> Rtc(Wire);
 // initialize the library with the numbers of the interface pins
 LiquidCrystal lcd(11, 10, 5, 4, 3, 2);
 
+  
+#define JD_REMOVAL 2400000
+
 char   g_moon_text[20]="New moon";
+double g_zod_ang = 0.0;
+int    g_zod_name_id = 0;
 double g_moon_norm_phase = 0.0;
 double g_sun_lo = 0.0;
 double g_moon_lo = 0.0;
-
+double g_moon_dist = 0.0;
+double g_moon_illper = 0.0;
+double g_jd=0.0;
 
 void setup()
 {
@@ -29,9 +36,8 @@ void setup()
   Serial.println(__TIME__);
   lcd.begin(16, 2);
   // Print a message to the LCD.
-  lcd.print("hello, world!");
-    //--------RTC SETUP ------------
-    Rtc.Begin();
+  //--------RTC SETUP ------------
+  Rtc.Begin();
 
     // if you are using ESP-01 then uncomment the line below to reset the pins to
     // the available pins for SDA, SCL
@@ -84,7 +90,7 @@ void setup()
 
 int get_max_led_brightness(void)
 {
-  return 80;
+  return 60;
 }
 
 void clear_led_strip(void)
@@ -135,34 +141,59 @@ void ShowMoon(double age)
   ledStrip.write(colors, LED_COUNT);     
 }
 
-int looper=0;
+int msg_num=0;
+
 void loop()
 {
   // If any digit is received, we will go into integer parsing mode
   // until all three calls to parseInt return an interger or time out.
   // Read the color from the computer.
-
  
   calc_astro_data(); 
   ShowMoon(g_moon_norm_phase);
 
-  looper++;
-  if (looper > 3) {looper=0;}
-
   // set the cursor to column 0, line 1
 
-  char txt[17]="                ";
-  char str_f[8];
+  char txt[17]="";
+  char str_f[16];
   lcd.clear();
-  lcd.setCursor(16-strlen(g_moon_text), 0);
+  lcd.setCursor((16-strlen(g_moon_text))/2, 0);
   lcd.print(g_moon_text);
   
-  dtostrf(g_moon_norm_phase*29.53, 4, 2, str_f);
-  sprintf(txt,"Age %s days",str_f);
-  lcd.setCursor(16-strlen(g_moon_text), 1);
+  RtcDateTime nw = Rtc.GetDateTime();
+  switch(msg_num)
+  {
+    case 4:
+        sprintf(txt,"%d/%d/%d %02d:%02d",nw.Day(),nw.Month(),nw.Year(),nw.Hour(),nw.Minute());
+      break;
+    case 3:
+        dtostrf(g_jd, 8, 2, str_f);
+        sprintf(txt,"JD 24%s",str_f);
+      break;
+    case 2:
+        dtostrf(g_moon_illper, 4, 2, str_f);
+        sprintf(txt,"Illum %s%%",str_f);
+      break;
+    case 1:
+        dtostrf(g_moon_dist, 4, 2, str_f);
+        sprintf(txt,"Dst %s EarthR",str_f);
+      break;
+    case 0:
+    default:
+        dtostrf(g_moon_norm_phase*29.53, 4, 2, str_f);
+        sprintf(txt,"Age %s days",str_f);
+      break;
+  }
+
+  lcd.setCursor((16-strlen(txt))/2, 1);
   lcd.print(txt);
-  
-  delay(2000);
+
+  msg_num++;
+  if (msg_num>4)
+  {
+    msg_num=0;
+  }
+  delay(3000);
    
  
 }
@@ -182,22 +213,16 @@ void calc_astro_data() {  // calculate the current phase of the moon
   double AG, IP;                      // based on the current date
   byte phase;                         // algorithm adapted from Stephen R. Schmitt's
                                       // Lunar Phase Computation program, originally
-  long YY, MM, K1, K2, K3, JD;        // written in the Zeno programming language
+  long YY, MM, K1, K2, K3    ;        // written in the Zeno programming language
                                       // http://home.att.net/~srschmitt/lunarphasecalc.html
+  double JD;
+  RtcDateTime now = Rtc.GetDateTime();
+  int D = now.Day();
+  int M = now.Month();
+  int Y = now.Year();
+  int TME_H = now.Hour();
+  int TME_M = now.Minute();
 
- RtcDateTime now = Rtc.GetDateTime();
- int D = now.Day();
- int M = now.Month();
- int Y = now.Year();
- int TME_H = now.Hour();
- int TME_M = now.Minute();
-
-  Serial.print(D); Serial.print("/");
-  Serial.print(M); Serial.print("/");
-  Serial.print(Y); Serial.print(" ");
-  Serial.print(TME_H); Serial.print(":");
-  Serial.print(TME_M); Serial.print(" "); 
-  Serial.println("");
   // calculate julian date
   YY = Y - floor((12 - M) / 10);
   MM = M + 9;
@@ -215,12 +240,16 @@ void calc_astro_data() {  // calculate the current phase of the moon
   {
     JD = JD -K3;
   }
-  JD += (TME_H+(TME_H/60))/24;
+  JD -= JD_REMOVAL;
+  double hf=(double)TME_M;
+  hf/=60;
+  hf+=(double)TME_H;
+  hf /=24;
+  JD += hf;
+  g_jd = JD;
   
-  IP = normalize((JD - 2451550.1) / 29.530588853);
+  IP = normalize((JD - 51550.1) / 29.530588853);
   g_moon_norm_phase = IP;
-  Serial.print( "Nage:"); Serial.print(g_moon_norm_phase); 
-  Serial.println("");
   AG = IP*29.53; // age in days
   //phase = IP*39;
   
@@ -239,7 +268,7 @@ void calc_astro_data() {  // calculate the current phase of the moon
   }
   else if( AG <  12.91963)
   {
-    strcpy(g_moon_text,"Waxing                                                                           gibbous");
+    strcpy(g_moon_text,"Waxing gibbous");
   }
   else if( AG <  16.61096)
   {
@@ -265,9 +294,11 @@ void calc_astro_data() {  // calculate the current phase of the moon
   // Convert phase to radians
   IP = IP*2*3.1415926535897932385;
 
+  g_moon_illper = 50*(1-cos(IP));
+
   //calculate moon's distance
   double DP = 2*PI*normalize( ( JD - 2451562.2 ) / 27.55454988 );
-  //DI := 60.4 - 3.3*cos( DP ) - 0.6*cos( 2*IP - DP ) - 0.5*cos( 2*IP )
+  g_moon_dist = 60.4 - 3.3*cos( DP ) - 0.6*cos( 2*IP - DP ) - 0.5*cos( 2*IP );
 
   // calculate moon's ecliptic latitude
   //NP := 2*PI*normalize( ( JD - 2451565.2 ) / 27.212220817 )
@@ -283,31 +314,6 @@ void calc_astro_data() {  // calculate the current phase of the moon
 
   g_sun_lo = 360*normalize((sun_L + (1.915)*sin(sun_g) + 0.020 * sin(2*sun_g))/360);
   g_moon_lo = 360*normalize(LO/360);
-  
-//  if    LO <  33.18 then Zodiac := "Pisces"
-//  elsif LO <  51.16 then Zodiac := "Aries"
-//  elsif LO <  93.44 then Zodiac := "Taurus"
-//  elsif LO < 119.48 then Zodiac := "Gemini"
-//  elsif LO < 135.30 then Zodiac := "Cancer"
-//  elsif LO < 173.34 then Zodiac := "Leo"
-//  elsif LO < 224.17 then Zodiac := "Virgo"
-//  elsif LO < 242.57 then Zodiac := "Libra"
-//  elsif LO < 271.26 then Zodiac := "Scorpio"
-//  elsif LO < 302.49 then Zodiac := "Sagittarius"
-//  elsif LO < 311.72 then Zodiac := "Capricorn"
-//  elsif LO < 348.58 then Zodiac := "Aquarius"
-//  else                   Zodiac := "Pisces"
-//  end if
-//
-//  % display results
-//  put "phase         = ", Phase
-//  put "age           = ", round2( AG ), " days"
-//  put "distance      = ", round2( DI ), " earth radii"
-//  put "ecliptic"
-//  put " latitude     = ", round2( LA ), '°'
-//  put " longitude    = ", round2( LO ), '°'
-//  put "constellation = ", Zodiac
-
 }
 
 
